@@ -1,35 +1,59 @@
 # Nexus Launcher (Rust)
 
-Custom **Minecraft Java Edition** launcher for **Android**, built on our own engine — not a PojavLauncher fork.
+Lightweight Android launcher + client path for **Minecraft: Java Edition**, built around a **Horizon-style Rust engine** — native, no JVM on device, focused on low memory and fast startup.
 
-> Engine name / core stack: *TBD* (will be decided next).
+> Not an official Minecraft product. Not affiliated with Mojang, Microsoft, or the upstream Horizon project.
 
-## Goals
+## Engine direction
 
-- Native Android launcher UI
-- Custom mobile-optimized Java runtime path
-- Official Mojang download & version system (manifests, libraries, assets, SHA1 verify)
-- First-class loader support as engine modules: Fabric, Quilt, Forge, NeoForge, OptiFine
-- Graphics translation layer suitable for mobile GPUs (OpenGL ES / ANGLE / fallbacks)
-- Rust-side performance-critical components where it makes sense
+| Choice | Decision |
+|--------|----------|
+| **Engine style** | Horizon Rust (Minecraft Java 26.3 rewritten in Rust) |
+| **Runtime** | Native Rust — **no Java / JVM on the phone** |
+| **Graphics** | Vulkan primary (wgpu), GLES fallback where needed |
+| **Goal** | Ultra-lightweight: small APK, low RAM, quick launch |
+| **Mods** | Native / sandboxed engine mods (e.g. `.hmod`-style) — not Fabric/Forge Java jars |
+| **Assets** | Official Mojang endpoints + hash verify; user must own Java Edition |
 
-## Planned layout (high level)
+This is **not** a Pojav-style “run the official JAR on Android” launcher.  
+The game client itself is a **Rust reimplementation path** inspired by [Horizon](https://playhorizon.dev/) — same worlds/rules target, different binary.
+
+## Why this approach
+
+- No heavy mobile JRE / LWJGL natives stack
+- Smaller process, better control over memory and GPU
+- Touch, lifecycle, and storage designed for Android from day one
+- Launcher UI + download/prepare pipeline + native engine in one product: **Nexus**
+
+## Planned layout
 
 ```
 Nexus-Launcher-Rust/
-├── android/          # Android app (UI + JNI bridge)
-├── engine/           # Core engine (download, launch, loaders, runtime)
-├── native/           # Rust / C++ native modules
-├── docs/             # Architecture & design notes
+├── android/              # Android app (UI, accounts, instances, controls)
+├── engine/               # Horizon-style core (world, net, render glue)
+├── native/               # Rust crates (wgpu/Vulkan, input, prepare)
+├── download/             # Manifests, assets, hash verify, resume
+├── docs/                 # Architecture notes
 └── README.md
 ```
 
-Exact module names will lock in once the engine name is chosen.
+Exact crate names lock in as we scaffold.
 
 ## Status
 
-**Scaffold only.** Repo created. Architecture + engine name coming next.
+- [x] Repo created
+- [x] Engine direction: **Horizon Rust, lightweight**
+- [ ] Scaffold crates + Android shell
+- [ ] Resource download / prepare pipeline
+- [ ] First Vulkan surface + touch input
+- [ ] Singleplayer bring-up target
+
+## References (upstream inspiration only)
+
+- Horizon: https://playhorizon.dev/
+- Horizon docs: https://playhorizon.dev/docs/
+- Unofficial Android ports exist in the community; **Nexus is our own launcher + integration**, not a rebrand of those repos.
 
 ## License
 
-TBD
+TBD (engine code we write; respect Minecraft EULA for game assets/data).
