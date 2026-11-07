@@ -1,49 +1,41 @@
-# Nexus Architecture (Phase 1)
+# Nexus Architecture
 
-## Product goals
+## Goals
 
-1. Versions work: `1.21.1` … `1.21.11`, `26.1`, `26.2`, `26.3`
-2. Extreme mobile optimization (FPS, RAM, startup, thermals)
-3. Premium launcher UI
+1. All matrix versions install + launch cleanly
+2. Ultra optimization (FPS, RAM, thermals)
+3. Premium UI
+4. Skins, resource packs, shader browse — **no mod browser**
+5. Play ≤ 5s when prepared (Rust fast path)
 
-## Dual backend
+## Crates
 
 ```
-┌─────────────────────────────────────┐
-│           Nexus Launcher UI         │
-│     (Kotlin · premium · Android)    │
-└─────────────────┬───────────────────┘
-                  │ version + instance
-        ┌─────────┴─────────┐
-        ▼                   ▼
-┌──────────────────┐ ┌─────────────────────┐
-│ horizon_native   │ │ multi_version       │
-│ Rust client      │ │ official jars +     │
-│ 26.3 → 26.x      │ │ mobile runtime      │
-│ no JVM           │ │ 1.21.1–1.21.11      │
-└────────┬─────────┘ └──────────┬──────────┘
-         │                      │
-         └──────────┬───────────┘
-                    ▼
-         shared: download · SHA1 · storage
-         shared: input · lifecycle · perf profiles
+UI (nexus-ui state) ──► nexus-core ──► launch / download / content
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+     HorizonNative (26.x)          MultiVersionRuntime (1.21.x)
 ```
 
-## Why dual path
+## 5 second launch
 
-- Pure Horizon-style rewrite = best FPS / lightest process, but **one game version per huge effort** (upstream Horizon ≈ 26.3 only).
-- Official multi-version support needs the real client jars + a mobile-capable runtime/renderer bridge.
-- One UI, two backends, shared download and performance policy.
+| Phase | Budget |
+|-------|--------|
+| Readiness check | &lt; 50 ms |
+| Instance paths + profile | &lt; 100 ms |
+| Engine process/handoff | rest of budget |
+| Network on Play | **forbidden** if ready |
 
-## Optimization layers
+Install/prepare is offline from Play. User installs from Versions screen first.
 
-1. **Device class** — detect RAM / GPU; pick default profile
-2. **Performance profiles** — Performance / Balanced / Quality
-3. **Dynamic scaling** — render distance, entity distance, particles under pressure
-4. **Graphics** — Vulkan preferred; GLES fallback
-5. **I/O** — parallel downloads, resume, hash verify, aggressive cache
+## Content policy
 
-## Out of scope for Phase 1
+- Skins: PNG drop-in + selector
+- Resource packs: zip/dir browse + enable order (next)
+- Shaders: pack browse + enable
+- Mods: not exposed in nav or APIs
 
-- Fancy feature packs, mod store polish, social, themes marketplace
-- Full parity of every Horizon desktop extra on day one
+## Honest scope
+
+Full Horizon-class game logic for every version is multi-milestone. This repo owns launcher, download, content, launch contract, and backend slots. Engine binaries fill those slots incrementally — **26.3 native first**.

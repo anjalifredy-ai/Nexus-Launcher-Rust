@@ -1,0 +1,10 @@
+[package]
+name = "nexus-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-versions = { path = "../nexus-versions" }
+nexus-content = { path = "../nexus-content" }
+serde = { workspace = true }

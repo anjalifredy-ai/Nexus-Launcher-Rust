@@ -1,0 +1,13 @@
+[package]
+name = "nexus-launch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-versions = { path = "../nexus-versions" }
+nexus-download = { path = "../nexus-download" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

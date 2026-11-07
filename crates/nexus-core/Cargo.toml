@@ -1,0 +1,17 @@
+[package]
+name = "nexus-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-versions = { path = "../nexus-versions" }
+nexus-download = { path = "../nexus-download" }
+nexus-content = { path = "../nexus-content" }
+nexus-launch = { path = "../nexus-launch" }
+nexus-ui = { path = "../nexus-ui" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
