@@ -215,7 +215,6 @@ pub async fn ensure_version(
         }
     }
 
-    // Asset index + objects
     if let Some(ai) = &version.asset_index {
         let index_path = install
             .assets_dir()
@@ -256,13 +255,11 @@ fn library_allowed_android(lib: &Library) -> bool {
         Some(r) if r.is_empty() => return true,
         Some(r) => r,
     };
-    // Default disallow if any rule exists, then apply in order (Mojang style).
     let mut allow = false;
     for rule in rules {
         let os_match = match &rule.os {
             None => true,
             Some(os) => match os.name.as_deref() {
-                // Treat Android closer to linux for classifier-less artifacts.
                 Some("linux") | None => true,
                 Some("windows") | Some("osx") => false,
                 _ => false,
@@ -277,7 +274,6 @@ fn library_allowed_android(lib: &Library) -> bool {
 }
 
 fn maven_path_from_name(name: &str) -> String {
-    // group:artifact:version[:classifier]
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 3 {
         return name.replace(':', "/");
@@ -319,7 +315,7 @@ async fn download_verified(
     if dest.is_file() && !expected_sha1.is_empty() {
         let existing = tokio::fs::read(dest).await?;
         if sha1_hex(&existing) == expected_sha1 {
-            return Ok();
+            return Ok(());
         }
     }
 
