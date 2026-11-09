@@ -1,11 +1,12 @@
-//! Runtime session + smooth frame loop + software scene.
+//! Runtime session + smooth frame loop + software scene + world chunks.
 
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nexus_render::{draw_scene, write_ppm, Framebuffer};
+use nexus_render::{draw_scene, write_ppm, Camera, Framebuffer};
 use nexus_versions::BackendKind;
+use nexus_world::World;
 
 #[derive(Debug)]
 pub enum EngineError {
@@ -147,6 +148,8 @@ pub struct EngineSupervisor {
     active: Option<SessionHandle>,
     stats: FrameStats,
     fb: Option<Framebuffer>,
+    camera: Camera,
+    world: World,
 }
 
 impl Default for EngineSupervisor {
@@ -155,6 +158,8 @@ impl Default for EngineSupervisor {
             active: None,
             stats: FrameStats::default(),
             fb: None,
+            camera: Camera::default(),
+            world: World::default(),
         }
     }
 }
@@ -177,6 +182,11 @@ impl EngineSupervisor {
             720,
             handle.smooth.resolution_scale_percent,
         ));
+        for cz in -1..=1 {
+            for cx in -1..=1 {
+                let _ = self.world.ensure_chunk(cx, cz);
+            }
+        }
         self.active = Some(handle.clone());
         Ok(handle)
     }
@@ -197,6 +207,10 @@ impl EngineSupervisor {
 
     pub fn active(&self) -> Option<&SessionHandle> {
         self.active.as_ref()
+    }
+
+    pub fn world_chunks(&self) -> usize {
+        self.world.chunk_count()
     }
 
     pub fn save_preview(&self, path: &std::path::Path) -> Result<(), EngineError> {
@@ -223,8 +237,10 @@ impl EngineSupervisor {
 
         let tick_n = self.stats.frames;
         let rd = session.smooth.render_distance;
+        self.camera.advance(tick_n);
+        let cam = self.camera;
         if let Some(fb) = self.fb.as_mut() {
-            draw_scene(fb, tick_n, rd);
+            draw_scene(fb, tick_n, rd, &cam);
         }
 
         let elapsed = t0.elapsed();
