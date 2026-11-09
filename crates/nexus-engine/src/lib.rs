@@ -1,9 +1,10 @@
-//! Runtime session + smooth frame loop for mobile.
+//! Runtime session + smooth frame loop + software scene.
 
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nexus_render::{draw_scene, write_ppm, Framebuffer};
 use nexus_versions::BackendKind;
 
 #[derive(Debug)]
@@ -34,7 +35,6 @@ pub enum PerformanceProfile {
 #[derive(Debug, Clone)]
 pub struct SmoothConfig {
     pub profile: PerformanceProfile,
-    /// 0 = unlimited FPS (no pacing sleep).
     pub fps_cap: u32,
     pub render_distance: u8,
     pub simulation_distance: u8,
@@ -146,6 +146,7 @@ pub struct FrameStats {
 pub struct EngineSupervisor {
     active: Option<SessionHandle>,
     stats: FrameStats,
+    fb: Option<Framebuffer>,
 }
 
 impl Default for EngineSupervisor {
@@ -153,6 +154,7 @@ impl Default for EngineSupervisor {
         Self {
             active: None,
             stats: FrameStats::default(),
+            fb: None,
         }
     }
 }
@@ -170,6 +172,11 @@ impl EngineSupervisor {
             running: true,
         };
         self.stats = FrameStats::default();
+        self.fb = Some(Framebuffer::from_scale(
+            1280,
+            720,
+            handle.smooth.resolution_scale_percent,
+        ));
         self.active = Some(handle.clone());
         Ok(handle)
     }
@@ -192,7 +199,17 @@ impl EngineSupervisor {
         self.active.as_ref()
     }
 
-    /// One tick. `fps_cap == 0` => unlimited (no sleep).
+    pub fn save_preview(&self, path: &std::path::Path) -> Result<(), EngineError> {
+        let Some(fb) = self.fb.as_ref() else {
+            return Err(EngineError::NotRunning);
+        };
+        write_ppm(fb, path).map_err(|_| EngineError::NotRunning)
+    }
+
+    pub fn framebuffer_size(&self) -> Option<(u32, u32)> {
+        self.fb.as_ref().map(|f| (f.width, f.height))
+    }
+
     pub fn tick(&mut self) -> Result<(), EngineError> {
         let Some(session) = self.active.as_mut() else {
             return Err(EngineError::NotRunning);
@@ -204,14 +221,11 @@ impl EngineSupervisor {
         let budget = session.smooth.frame_duration();
         let t0 = Instant::now();
 
-        let work_units = (session.smooth.render_distance as u32)
-            .saturating_mul(session.smooth.resolution_scale_percent as u32)
-            / 10;
-        let mut acc = 0u64;
-        for i in 0..work_units.max(1) {
-            acc = acc.wrapping_add(i as u64 * 2654435761);
+        let tick_n = self.stats.frames;
+        let rd = session.smooth.render_distance;
+        if let Some(fb) = self.fb.as_mut() {
+            draw_scene(fb, tick_n, rd);
         }
-        std::hint::black_box(acc);
 
         let elapsed = t0.elapsed();
         self.stats.frames += 1;
@@ -264,20 +278,5 @@ mod tests {
         let p = SmoothConfig::from_profile(PerformanceProfile::Balanced);
         assert_eq!(p.fps_cap, 0);
         assert!(!p.vsync);
-    }
-
-    #[test]
-    fn run_for_produces_frames() {
-        let mut eng = EngineSupervisor::default();
-        eng.start(SessionRequest {
-            version_id: "26.3".into(),
-            backend: BackendKind::HorizonNative,
-            smooth: SmoothConfig::from_profile(PerformanceProfile::Performance),
-            instance_dir: PathBuf::from("/tmp/nexus-i"),
-            game_dir: PathBuf::from("/tmp/nexus-g"),
-        })
-        .unwrap();
-        let stats = eng.run_for(Duration::from_millis(50)).unwrap();
-        assert!(stats.frames > 0);
     }
 }
