@@ -34,6 +34,7 @@ pub enum PerformanceProfile {
 #[derive(Debug, Clone)]
 pub struct SmoothConfig {
     pub profile: PerformanceProfile,
+    /// 0 = unlimited FPS (no pacing sleep).
     pub fps_cap: u32,
     pub render_distance: u8,
     pub simulation_distance: u8,
@@ -52,12 +53,12 @@ impl SmoothConfig {
         match profile {
             PerformanceProfile::Performance => Self {
                 profile,
-                fps_cap: 60,
+                fps_cap: 0,
                 render_distance: 6,
                 simulation_distance: 4,
                 entity_distance_percent: 50,
                 resolution_scale_percent: 75,
-                vsync: true,
+                vsync: false,
                 max_chunk_mesh_jobs: 2,
                 particle_multiplier_percent: 40,
                 prefer_vulkan: true,
@@ -66,12 +67,12 @@ impl SmoothConfig {
             },
             PerformanceProfile::Balanced => Self {
                 profile,
-                fps_cap: 60,
+                fps_cap: 0,
                 render_distance: 8,
                 simulation_distance: 6,
                 entity_distance_percent: 75,
                 resolution_scale_percent: 90,
-                vsync: true,
+                vsync: false,
                 max_chunk_mesh_jobs: 3,
                 particle_multiplier_percent: 70,
                 prefer_vulkan: true,
@@ -80,12 +81,12 @@ impl SmoothConfig {
             },
             PerformanceProfile::Quality => Self {
                 profile,
-                fps_cap: 60,
+                fps_cap: 0,
                 render_distance: 12,
                 simulation_distance: 8,
                 entity_distance_percent: 100,
                 resolution_scale_percent: 100,
-                vsync: true,
+                vsync: false,
                 max_chunk_mesh_jobs: 4,
                 particle_multiplier_percent: 100,
                 prefer_vulkan: true,
@@ -191,7 +192,7 @@ impl EngineSupervisor {
         self.active.as_ref()
     }
 
-    /// One tick: simulate work, pace to FPS cap, adaptive quality on hitch.
+    /// One tick. `fps_cap == 0` => unlimited (no sleep).
     pub fn tick(&mut self) -> Result<(), EngineError> {
         let Some(session) = self.active.as_mut() else {
             return Err(EngineError::NotRunning);
@@ -220,16 +221,23 @@ impl EngineSupervisor {
             + self.stats.last_frame_us)
             / (n as u128);
 
-        if elapsed > budget {
+        let capped = session.smooth.fps_cap > 0;
+        if capped {
+            if elapsed > budget {
+                self.stats.over_budget += 1;
+                if session.smooth.adaptive_quality {
+                    session.smooth.degrade_one_step();
+                    self.stats.degrade_steps += 1;
+                }
+            } else if let Some(rest) = budget.checked_sub(elapsed) {
+                if session.smooth.vsync {
+                    thread::sleep(rest);
+                }
+            }
+        } else if elapsed > Duration::from_millis(50) && session.smooth.adaptive_quality {
             self.stats.over_budget += 1;
-            if session.smooth.adaptive_quality {
-                session.smooth.degrade_one_step();
-                self.stats.degrade_steps += 1;
-            }
-        } else if let Some(rest) = budget.checked_sub(elapsed) {
-            if session.smooth.vsync {
-                thread::sleep(rest);
-            }
+            session.smooth.degrade_one_step();
+            self.stats.degrade_steps += 1;
         }
 
         Ok(())
@@ -252,10 +260,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn performance_is_lighter_than_quality() {
-        let p = SmoothConfig::from_profile(PerformanceProfile::Performance);
-        let q = SmoothConfig::from_profile(PerformanceProfile::Quality);
-        assert!(p.render_distance < q.render_distance);
+    fn unlimited_by_default() {
+        let p = SmoothConfig::from_profile(PerformanceProfile::Balanced);
+        assert_eq!(p.fps_cap, 0);
+        assert!(!p.vsync);
     }
 
     #[test]
@@ -269,7 +277,7 @@ mod tests {
             game_dir: PathBuf::from("/tmp/nexus-g"),
         })
         .unwrap();
-        let stats = eng.run_for(Duration::from_millis(100)).unwrap();
+        let stats = eng.run_for(Duration::from_millis(50)).unwrap();
         assert!(stats.frames > 0);
     }
 }
