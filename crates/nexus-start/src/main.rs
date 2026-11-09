@@ -1,7 +1,6 @@
-//! Nexus Launcher — start entry with live frame loop.
+//! Nexus Launcher — live frame loop + software scene preview.
 //!
-//!   cargo run -p nexus-start
-//!   cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 3
+//!   cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 1
 
 use std::env;
 use std::path::PathBuf;
@@ -43,9 +42,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "Nexus Launcher\n\n\
-                     Versions: {}\n\n\
-                     USAGE:\n  nexus-start [--version ID] [--profile perf|balanced|quality] [--seconds N]\n",
+                    "Nexus Launcher\n\nVersions: {}\n\nUSAGE:\n  nexus-start [--version ID] [--profile perf|balanced|quality] [--seconds N]\n",
                     SUPPORTED_VERSIONS.join(", ")
                 );
                 return;
@@ -62,7 +59,6 @@ fn main() {
         Some(v) => v,
         None => {
             eprintln!("unsupported version: {version}");
-            eprintln!("supported: {}", SUPPORTED_VERSIONS.join(", "));
             std::process::exit(1);
         }
     };
@@ -74,15 +70,16 @@ fn main() {
     let instance_dir = data.join("instances").join(&version);
     let _ = std::fs::create_dir_all(&game_dir);
     let _ = std::fs::create_dir_all(&instance_dir);
-
     let ready = game_dir.join(".nexus_ready");
     if !ready.exists() {
         let _ = std::fs::write(&ready, b"local-dev");
     }
 
-    let smooth = SmoothConfig::from_profile(profile);
-    let handoff_t0 = Instant::now();
+    let mut smooth = SmoothConfig::from_profile(profile);
+    smooth.fps_cap = 0;
+    smooth.vsync = false;
 
+    let handoff_t0 = Instant::now();
     let mut engine = EngineSupervisor::default();
     let handle = match engine.start(SessionRequest {
         version_id: version.clone(),
@@ -111,10 +108,10 @@ fn main() {
     println!("  backend     : {backend_name}");
     println!("  profile     : {:?}", handle.smooth.profile);
     println!("  handoff     : {handoff_ms} ms");
-    println!("  fps_cap     : {}", handle.smooth.fps_cap);
+    println!("  fps_cap     : unlimited");
     println!("  render dist : {}", handle.smooth.render_distance);
     println!("  res scale   : {}%", handle.smooth.resolution_scale_percent);
-    println!("  loop        : {seconds}s live frame loop");
+    println!("  loop        : {seconds}s");
     println!("══════════════════════════════════════");
 
     let stats = match engine.run_for(Duration::from_secs(seconds)) {
@@ -136,14 +133,16 @@ fn main() {
     println!("  avg FPS     : {fps:.1}");
     println!("  avg frame   : {} µs", stats.avg_frame_us);
     println!("  over budget : {}", stats.over_budget);
-    println!("  adaptive ↓  : {}", stats.degrade_steps);
-    if let Some(s) = engine.active() {
-        println!("  final RD    : {}", s.smooth.render_distance);
-        println!("  final scale : {}%", s.smooth.resolution_scale_percent);
-    }
-    println!("══════════════════════════════════════");
-    println!("  status: LIVE loop OK · GPU world = next");
-    println!("══════════════════════════════════════");
 
+    let preview = data.join("preview.ppm");
+    if engine.save_preview(&preview).is_ok() {
+        if let Some((w, h)) = engine.framebuffer_size() {
+            println!("  preview     : {} ({}x{})", preview.display(), w, h);
+        }
+    }
+
+    println!("══════════════════════════════════════");
+    println!("  status: LIVE scene render · GPU/wgpu next");
+    println!("══════════════════════════════════════");
     let _ = engine.stop();
 }
