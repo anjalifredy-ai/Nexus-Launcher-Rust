@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/nexus-versions",
     "crates/nexus-engine",
+    "crates/nexus-render",
     "crates/nexus-start",
 ]
 
