@@ -7,6 +7,7 @@ members = [
     "crates/nexus-world",
     "crates/nexus-mesh",
     "crates/nexus-input",
+    "crates/nexus-server",
     "crates/nexus-android",
     "crates/nexus-start",
 ]

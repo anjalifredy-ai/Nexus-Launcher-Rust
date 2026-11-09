@@ -1,28 +1,28 @@
 # Nexus Launcher (Rust)
 
+Real playable core direction: **client + integrated GameServer** (MC-style singleplayer).
+
 ```bash
-cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 1
+cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 2
 ```
 
-## Large batch status
+## Live game core
 
 | System | Status |
 |--------|--------|
-| Versions 1.21.1–11 + 26.x | yes |
-| Unlimited FPS loop | yes |
-| **5×5 chunk load (25)** | yes |
-| **Face-culled mesh ~38k tris** | yes |
-| Height cache (draw) | yes |
-| **Input + Player** | yes |
-| **Android shell API** | yes |
-| preview.ppm | yes |
+| GameServer 20 TPS | yes |
+| Authoritative world | yes |
+| Players join/move | yes |
+| Block place / break | yes |
+| Culled mesh ~38k tris | yes |
+| Client render loop | software |
+| Full Mojang protocol | **not yet** |
+| Full Java MC parity | **long road** |
+
+Honest scope: this is a **Rust voxel game core** aimed at Horizon-class mobile play, not a finished decompile of Java Edition.
 
 ## Crates
 
-`versions` `world` `mesh` `render` `input` `engine` `android` `start`
-
-## Next
-
-wgpu · JNI APK · Mojang install
+`server` `world` `mesh` `render` `input` `engine` `android` `start`
 
 > Not an official Minecraft product.

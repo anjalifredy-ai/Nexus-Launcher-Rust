@@ -10,3 +10,4 @@ nexus-render = { path = "../nexus-render" }
 nexus-world = { path = "../nexus-world" }
 nexus-mesh = { path = "../nexus-mesh" }
 nexus-input = { path = "../nexus-input" }
+nexus-server = { path = "../nexus-server" }

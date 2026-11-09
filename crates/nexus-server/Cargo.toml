@@ -1,0 +1,10 @@
+[package]
+name = "nexus-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-world = { path = "../nexus-world" }
+nexus-mesh = { path = "../nexus-mesh" }
+nexus-input = { path = "../nexus-input" }
