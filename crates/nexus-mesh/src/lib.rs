@@ -1,4 +1,4 @@
-//! Chunk → triangle mesh (CPU). Ready for wgpu upload later.
+//! Chunk → triangle mesh (tops + sides). GPU-ready buffers.
 
 use nexus_world::{BlockId, Chunk, CHUNK_SIZE};
 
@@ -38,7 +38,14 @@ fn color(block: BlockId) -> (u8, u8, u8) {
     }
 }
 
-pub fn mesh_chunk_tops(chunk: &Chunk, out: &mut Mesh) {
+fn push_quad(out: &mut Mesh, v: [Vertex; 4]) {
+    let i = out.vertices.len() as u32;
+    out.vertices.extend_from_slice(&v);
+    out.indices
+        .extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+}
+
+pub fn mesh_chunk_solid(chunk: &Chunk, out: &mut Mesh) {
     let base_x = chunk.cx as f32 * CHUNK_SIZE as f32;
     let base_z = chunk.cz as f32 * CHUNK_SIZE as f32;
 
@@ -48,47 +55,212 @@ pub fn mesh_chunk_tops(chunk: &Chunk, out: &mut Mesh) {
             if col.height == 0 || col.top == BlockId::Air {
                 continue;
             }
-            let (r, g, b) = color(col.top);
-            let y = col.height as f32;
+            let (tr, tg, tb) = color(col.top);
+            let (dr, dg, db) = color(BlockId::Dirt);
+            let (sr, sg, sb) = color(BlockId::Stone);
+            let y1 = col.height as f32;
             let x0 = base_x + x as f32;
             let z0 = base_z + z as f32;
-            let i = out.vertices.len() as u32;
-            out.vertices.push(Vertex {
-                x: x0,
-                y,
-                z: z0,
-                r,
-                g,
-                b,
-            });
-            out.vertices.push(Vertex {
-                x: x0 + 1.0,
-                y,
-                z: z0,
-                r,
-                g,
-                b,
-            });
-            out.vertices.push(Vertex {
-                x: x0 + 1.0,
-                y,
-                z: z0 + 1.0,
-                r,
-                g,
-                b,
-            });
-            out.vertices.push(Vertex {
-                x: x0,
-                y,
-                z: z0 + 1.0,
-                r,
-                g,
-                b,
-            });
-            out.indices
-                .extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+            let x1 = x0 + 1.0;
+            let z1 = z0 + 1.0;
+
+            push_quad(
+                out,
+                [
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z0,
+                        r: tr,
+                        g: tg,
+                        b: tb,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z0,
+                        r: tr,
+                        g: tg,
+                        b: tb,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z1,
+                        r: tr,
+                        g: tg,
+                        b: tb,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z1,
+                        r: tr,
+                        g: tg,
+                        b: tb,
+                    },
+                ],
+            );
+
+            let (r, g, b) = if col.height > 12 {
+                (sr, sg, sb)
+            } else {
+                (dr, dg, db)
+            };
+            push_quad(
+                out,
+                [
+                    Vertex {
+                        x: x0,
+                        y: 0.0,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: 0.0,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                ],
+            );
+            push_quad(
+                out,
+                [
+                    Vertex {
+                        x: x1,
+                        y: 0.0,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: 0.0,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                ],
+            );
+            push_quad(
+                out,
+                [
+                    Vertex {
+                        x: x0,
+                        y: 0.0,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: 0.0,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x0,
+                        y: y1,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                ],
+            );
+            push_quad(
+                out,
+                [
+                    Vertex {
+                        x: x1,
+                        y: 0.0,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: 0.0,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z1,
+                        r,
+                        g,
+                        b,
+                    },
+                    Vertex {
+                        x: x1,
+                        y: y1,
+                        z: z0,
+                        r,
+                        g,
+                        b,
+                    },
+                ],
+            );
         }
     }
+}
+
+pub fn mesh_chunk_tops(chunk: &Chunk, out: &mut Mesh) {
+    mesh_chunk_solid(chunk, out);
 }
 
 #[cfg(test)]
@@ -97,10 +269,10 @@ mod tests {
     use nexus_world::Chunk;
 
     #[test]
-    fn meshes_non_empty() {
+    fn solid_has_sides() {
         let c = Chunk::generate(0, 0);
         let mut m = Mesh::default();
-        mesh_chunk_tops(&c, &mut m);
-        assert!(m.triangle_count() > 0);
+        mesh_chunk_solid(&c, &mut m);
+        assert!(m.triangle_count() > 1000);
     }
 }

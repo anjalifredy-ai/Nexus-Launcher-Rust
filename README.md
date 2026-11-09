@@ -4,18 +4,16 @@
 cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 1
 ```
 
-## Live now
+## Live
 
-| Layer | Status |
-|-------|--------|
-| Unlimited FPS loop | yes |
-| Software scene + camera | yes |
-| World chunks (9) | yes |
-| **Mesh tops** | **4608 tris / 9216 verts** |
-| preview.ppm | yes |
+- Unlimited FPS loop
+- World: 9 chunks
+- **Mesh: ~23040 tris** (tops + 4 sides)
+- Software draw from **world heights**
+- preview.ppm
 
 ## Next
 
-Side faces · wgpu upload · Android
+Occlusion · wgpu · Android
 
 > Not an official Minecraft product.
