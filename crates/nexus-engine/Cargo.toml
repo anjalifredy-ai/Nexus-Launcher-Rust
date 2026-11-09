@@ -8,3 +8,4 @@ license.workspace = true
 nexus-versions = { path = "../nexus-versions" }
 nexus-render = { path = "../nexus-render" }
 nexus-world = { path = "../nexus-world" }
+nexus-mesh = { path = "../nexus-mesh" }

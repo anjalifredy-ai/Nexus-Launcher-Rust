@@ -5,6 +5,7 @@ members = [
     "crates/nexus-engine",
     "crates/nexus-render",
     "crates/nexus-world",
+    "crates/nexus-mesh",
     "crates/nexus-start",
 ]
 
