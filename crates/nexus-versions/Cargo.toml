@@ -3,8 +3,3 @@ name = "nexus-versions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }

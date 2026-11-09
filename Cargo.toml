@@ -9,6 +9,7 @@ members = [
     "crates/nexus-engine",
     "crates/nexus-ui",
     "crates/nexus-android",
+    "crates/nexus-start",
 ]
 
 [workspace.package]
@@ -20,10 +21,11 @@ authors = ["Nexus Team"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
+thiserror = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 sha1 = "0.10"
 hex = "0.4"
 tracing = "0.1"
+tracing-subscriber = "0.3"
 futures = "0.3"

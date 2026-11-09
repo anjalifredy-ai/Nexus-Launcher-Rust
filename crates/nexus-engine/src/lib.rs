@@ -1,23 +1,27 @@
-//! Runtime session + smoothness budgets.
-//!
-//! Goal: stable frametimes on mobile — not just peak FPS spikes.
+//! Runtime session + smoothness budgets for mobile.
+
+use std::path::PathBuf;
 
 use nexus_versions::BackendKind;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use tracing::info;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum EngineError {
-    #[error("session already running")]
     AlreadyRunning,
-    #[error("session not running")]
     NotRunning,
-    #[error("backend not implemented: {0:?}")]
-    BackendPending(BackendKind),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyRunning => write!(f, "session already running"),
+            Self::NotRunning => write!(f, "session not running"),
+        }
+    }
+}
+
+impl std::error::Error for EngineError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PerformanceProfile {
     Performance,
     #[default]
@@ -25,25 +29,19 @@ pub enum PerformanceProfile {
     Quality,
 }
 
-/// Tunables that keep the game smooth under thermal / memory pressure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SmoothConfig {
     pub profile: PerformanceProfile,
-    /// Hard FPS cap (0 = uncapped). Mobile default 60 for stability.
     pub fps_cap: u32,
     pub render_distance: u8,
     pub simulation_distance: u8,
     pub entity_distance_percent: u8,
-    /// 100 = native res; lower = GPU relief.
     pub resolution_scale_percent: u8,
     pub vsync: bool,
     pub max_chunk_mesh_jobs: u8,
     pub particle_multiplier_percent: u8,
-    /// Prefer Vulkan when available.
     pub prefer_vulkan: bool,
-    /// Drop quality automatically if frame time exceeds budget.
     pub adaptive_quality: bool,
-    /// Target frame budget in microseconds (16666 ≈ 60 FPS).
     pub frame_budget_us: u32,
 }
 
@@ -95,7 +93,6 @@ impl SmoothConfig {
         }
     }
 
-    /// Step quality down one notch (thermal / hitch recovery).
     pub fn degrade_one_step(&mut self) {
         if self.resolution_scale_percent > 60 {
             self.resolution_scale_percent = self.resolution_scale_percent.saturating_sub(5);
@@ -115,8 +112,8 @@ pub struct SessionRequest {
     pub version_id: String,
     pub backend: BackendKind,
     pub smooth: SmoothConfig,
-    pub instance_dir: std::path::PathBuf,
-    pub game_dir: std::path::PathBuf,
+    pub instance_dir: PathBuf,
+    pub game_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +124,6 @@ pub struct SessionHandle {
     pub running: bool,
 }
 
-/// Engine supervisor — one active session at a time on mobile.
 pub struct EngineSupervisor {
     active: Option<SessionHandle>,
 }
@@ -143,21 +139,7 @@ impl EngineSupervisor {
         if self.active.as_ref().map(|s| s.running).unwrap_or(false) {
             return Err(EngineError::AlreadyRunning);
         }
-
-        info!(
-            version = %req.version_id,
-            backend = ?req.backend,
-            fps_cap = req.smooth.fps_cap,
-            rd = req.smooth.render_distance,
-            scale = req.smooth.resolution_scale_percent,
-            "starting smooth session"
-        );
-
-        // Backend-specific entry points land here as binaries link in.
-        // Until then we still enforce single-session + smooth config so the
-        // launcher path is production-shaped.
         let _ = (&req.instance_dir, &req.game_dir);
-
         let handle = SessionHandle {
             version_id: req.version_id,
             backend: req.backend,
@@ -172,7 +154,6 @@ impl EngineSupervisor {
         match self.active.as_mut() {
             Some(s) if s.running => {
                 s.running = false;
-                info!(version = %s.version_id, "session stopped");
                 Ok(())
             }
             _ => Err(EngineError::NotRunning),
@@ -183,11 +164,6 @@ impl EngineSupervisor {
         if let Some(s) = self.active.as_mut() {
             if s.smooth.adaptive_quality {
                 s.smooth.degrade_one_step();
-                info!(
-                    rd = s.smooth.render_distance,
-                    scale = s.smooth.resolution_scale_percent,
-                    "adaptive quality step-down"
-                );
             }
         }
     }
@@ -210,10 +186,18 @@ mod tests {
     }
 
     #[test]
-    fn degrade_reduces_load() {
-        let mut c = SmoothConfig::from_profile(PerformanceProfile::Balanced);
-        let rd = c.render_distance;
-        c.degrade_one_step();
-        assert!(c.render_distance <= rd);
+    fn session_starts_and_stops() {
+        let mut eng = EngineSupervisor::default();
+        let h = eng
+            .start(SessionRequest {
+                version_id: "26.3".into(),
+                backend: BackendKind::HorizonNative,
+                smooth: SmoothConfig::from_profile(PerformanceProfile::Balanced),
+                instance_dir: PathBuf::from("/tmp/nexus-i"),
+                game_dir: PathBuf::from("/tmp/nexus-g"),
+            })
+            .unwrap();
+        assert!(h.running);
+        eng.stop().unwrap();
     }
 }

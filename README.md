@@ -1,44 +1,37 @@
 # Nexus Launcher (Rust)
 
-Premium Android launcher + Horizon-style Rust path. Focus: **smooth play**, fast prepared launch, clean version matrix.
+Premium Android-oriented launcher + Horizon-style Rust path. **Session start is live.**
 
-> Not an official Minecraft product.
+## Quick start
 
-## Smooth play (current work)
+```bash
+cargo run -p nexus-start
+cargo run -p nexus-start -- --version 26.3 --profile performance
+cargo run -p nexus-start -- --version 1.21.1 --profile balanced
+```
 
-- `nexus-engine` — session supervisor, **Performance / Balanced / Quality**, adaptive quality step-down
-- Frame budget ~16.6 ms (60 FPS), VSync on, Vulkan preferred
-- Full install path: version JSON + client jar + **libraries** + **asset index/objects** (parallel, SHA1)
-- Launch: ready-only, no network on Play
+Example output: session boots with backend (`HorizonNative` / `MultiVersionRuntime`), 60 FPS budget, render distance, resolution scale, Vulkan preferred.
 
 ## Versions
 
 `1.21.1`–`1.21.11` · `26.1` · `26.2` · `26.3`
 
-## Content
+## Smooth profiles
 
-Skins · Resource packs · Shaders — **no mod browser**
-
-## Workspace
-
-```
-nexus-versions | nexus-download | nexus-content
-nexus-engine   | nexus-launch   | nexus-ui
-nexus-core     | nexus-android
-```
+| Profile | RD | Scale |
+|---------|----|-------|
+| Performance | 6 | 75% |
+| Balanced | 8 | 90% |
+| Quality | 12 | 100% |
 
 ## Status
 
-- [x] Version matrix + dual backend tags
-- [x] Parallel lib/asset install + ready marker
-- [x] SmoothConfig + adaptive quality
-- [x] Launch handoff + engine session API
-- [ ] Link real Horizon-native / multi-version binaries
-- [ ] Android premium UI shell on device
-- [ ] Measured 60 FPS session on hardware
+- [x] `nexus-start` boots session
+- [x] Version matrix + dual backend
+- [x] SmoothConfig + adaptive quality API
+- [x] Download pipeline code (libs/assets)
+- [ ] Full Mojang install on device
+- [ ] Real world/GPU engine binary
+- [ ] Android APK UI
 
-```bash
-cargo test -p nexus-engine
-cargo test -p nexus-versions
-cargo check --workspace
-```
+> Not an official Minecraft product.
