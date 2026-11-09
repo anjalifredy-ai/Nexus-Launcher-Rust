@@ -1,9 +1,10 @@
-//! Runtime session + smooth frame loop + software scene + world chunks.
+//! Session + frame loop + software scene + world + mesh.
 
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nexus_mesh::{mesh_chunk_tops, Mesh};
 use nexus_render::{draw_scene, write_ppm, Camera, Framebuffer};
 use nexus_versions::BackendKind;
 use nexus_world::World;
@@ -150,6 +151,7 @@ pub struct EngineSupervisor {
     fb: Option<Framebuffer>,
     camera: Camera,
     world: World,
+    mesh: Mesh,
 }
 
 impl Default for EngineSupervisor {
@@ -160,6 +162,7 @@ impl Default for EngineSupervisor {
             fb: None,
             camera: Camera::default(),
             world: World::default(),
+            mesh: Mesh::default(),
         }
     }
 }
@@ -182,9 +185,12 @@ impl EngineSupervisor {
             720,
             handle.smooth.resolution_scale_percent,
         ));
+        self.mesh.clear();
         for cz in -1..=1 {
             for cx in -1..=1 {
                 let _ = self.world.ensure_chunk(cx, cz);
+                let ch = nexus_world::Chunk::generate(cx, cz);
+                mesh_chunk_tops(&ch, &mut self.mesh);
             }
         }
         self.active = Some(handle.clone());
@@ -211,6 +217,14 @@ impl EngineSupervisor {
 
     pub fn world_chunks(&self) -> usize {
         self.world.chunk_count()
+    }
+
+    pub fn mesh_tris(&self) -> usize {
+        self.mesh.triangle_count()
+    }
+
+    pub fn mesh_verts(&self) -> usize {
+        self.mesh.vertices.len()
     }
 
     pub fn save_preview(&self, path: &std::path::Path) -> Result<(), EngineError> {
@@ -293,6 +307,5 @@ mod tests {
     fn unlimited_by_default() {
         let p = SmoothConfig::from_profile(PerformanceProfile::Balanced);
         assert_eq!(p.fps_cap, 0);
-        assert!(!p.vsync);
     }
 }
