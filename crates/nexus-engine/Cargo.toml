@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 nexus-versions = { path = "../nexus-versions" }
 nexus-render = { path = "../nexus-render" }
+nexus-world = { path = "../nexus-world" }

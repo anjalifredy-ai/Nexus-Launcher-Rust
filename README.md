@@ -1,26 +1,26 @@
 # Nexus Launcher (Rust)
 
-Horizon-style Rust path + unlimited FPS + **software scene renderer**.
-
 ## Run
 
 ```bash
 cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 1
 ```
 
-Writes `preview.ppm` under data dir — sky, sun, terrain blocks, crosshair.
+## Stack now
 
-## Now
+- **Unlimited FPS** frame loop
+- **Software renderer** (row-fill sky/ground, heightmap columns, camera orbit)
+- **`nexus-world`** — 16×16 chunks, grass/dirt/stone columns (9 chunks prefetched)
+- Preview: `preview.ppm`
 
-- Unlimited FPS
-- Live frame loop + adaptive quality
-- Software RGB framebuffer (scale-aware)
-- Dual backend for 1.21.x / 26.x
+## Versions
+
+`1.21.1`–`1.21.11` · `26.1` · `26.2` · `26.3`
 
 ## Next
 
-- wgpu / Vulkan surface
-- Android APK shell
-- Mojang install on device
+- Mesh from world chunks
+- wgpu/Vulkan
+- Android shell
 
 > Not an official Minecraft product.
