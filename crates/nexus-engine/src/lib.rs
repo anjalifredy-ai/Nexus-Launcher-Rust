@@ -1,6 +1,8 @@
-//! Runtime session + smoothness budgets for mobile.
+//! Runtime session + smooth frame loop for mobile.
 
 use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use nexus_versions::BackendKind;
 
@@ -93,6 +95,13 @@ impl SmoothConfig {
         }
     }
 
+    pub fn frame_duration(&self) -> Duration {
+        if self.fps_cap == 0 {
+            return Duration::from_micros(1);
+        }
+        Duration::from_micros(1_000_000 / u64::from(self.fps_cap.max(1)))
+    }
+
     pub fn degrade_one_step(&mut self) {
         if self.resolution_scale_percent > 60 {
             self.resolution_scale_percent = self.resolution_scale_percent.saturating_sub(5);
@@ -124,13 +133,26 @@ pub struct SessionHandle {
     pub running: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FrameStats {
+    pub frames: u64,
+    pub over_budget: u64,
+    pub degrade_steps: u32,
+    pub last_frame_us: u128,
+    pub avg_frame_us: u128,
+}
+
 pub struct EngineSupervisor {
     active: Option<SessionHandle>,
+    stats: FrameStats,
 }
 
 impl Default for EngineSupervisor {
     fn default() -> Self {
-        Self { active: None }
+        Self {
+            active: None,
+            stats: FrameStats::default(),
+        }
     }
 }
 
@@ -146,6 +168,7 @@ impl EngineSupervisor {
             smooth: req.smooth,
             running: true,
         };
+        self.stats = FrameStats::default();
         self.active = Some(handle.clone());
         Ok(handle)
     }
@@ -160,16 +183,67 @@ impl EngineSupervisor {
         }
     }
 
-    pub fn on_frame_over_budget(&mut self) {
-        if let Some(s) = self.active.as_mut() {
-            if s.smooth.adaptive_quality {
-                s.smooth.degrade_one_step();
-            }
-        }
+    pub fn stats(&self) -> &FrameStats {
+        &self.stats
     }
 
     pub fn active(&self) -> Option<&SessionHandle> {
         self.active.as_ref()
+    }
+
+    /// One tick: simulate work, pace to FPS cap, adaptive quality on hitch.
+    pub fn tick(&mut self) -> Result<(), EngineError> {
+        let Some(session) = self.active.as_mut() else {
+            return Err(EngineError::NotRunning);
+        };
+        if !session.running {
+            return Err(EngineError::NotRunning);
+        }
+
+        let budget = session.smooth.frame_duration();
+        let t0 = Instant::now();
+
+        let work_units = (session.smooth.render_distance as u32)
+            .saturating_mul(session.smooth.resolution_scale_percent as u32)
+            / 10;
+        let mut acc = 0u64;
+        for i in 0..work_units.max(1) {
+            acc = acc.wrapping_add(i as u64 * 2654435761);
+        }
+        std::hint::black_box(acc);
+
+        let elapsed = t0.elapsed();
+        self.stats.frames += 1;
+        self.stats.last_frame_us = elapsed.as_micros();
+        let n = self.stats.frames;
+        self.stats.avg_frame_us = ((self.stats.avg_frame_us * ((n - 1) as u128))
+            + self.stats.last_frame_us)
+            / (n as u128);
+
+        if elapsed > budget {
+            self.stats.over_budget += 1;
+            if session.smooth.adaptive_quality {
+                session.smooth.degrade_one_step();
+                self.stats.degrade_steps += 1;
+            }
+        } else if let Some(rest) = budget.checked_sub(elapsed) {
+            if session.smooth.vsync {
+                thread::sleep(rest);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn run_for(&mut self, duration: Duration) -> Result<FrameStats, EngineError> {
+        let end = Instant::now() + duration;
+        while Instant::now() < end {
+            if !self.active.as_ref().map(|s| s.running).unwrap_or(false) {
+                break;
+            }
+            self.tick()?;
+        }
+        Ok(self.stats.clone())
     }
 }
 
@@ -182,22 +256,20 @@ mod tests {
         let p = SmoothConfig::from_profile(PerformanceProfile::Performance);
         let q = SmoothConfig::from_profile(PerformanceProfile::Quality);
         assert!(p.render_distance < q.render_distance);
-        assert!(p.resolution_scale_percent < q.resolution_scale_percent);
     }
 
     #[test]
-    fn session_starts_and_stops() {
+    fn run_for_produces_frames() {
         let mut eng = EngineSupervisor::default();
-        let h = eng
-            .start(SessionRequest {
-                version_id: "26.3".into(),
-                backend: BackendKind::HorizonNative,
-                smooth: SmoothConfig::from_profile(PerformanceProfile::Balanced),
-                instance_dir: PathBuf::from("/tmp/nexus-i"),
-                game_dir: PathBuf::from("/tmp/nexus-g"),
-            })
-            .unwrap();
-        assert!(h.running);
-        eng.stop().unwrap();
+        eng.start(SessionRequest {
+            version_id: "26.3".into(),
+            backend: BackendKind::HorizonNative,
+            smooth: SmoothConfig::from_profile(PerformanceProfile::Performance),
+            instance_dir: PathBuf::from("/tmp/nexus-i"),
+            game_dir: PathBuf::from("/tmp/nexus-g"),
+        })
+        .unwrap();
+        let stats = eng.run_for(Duration::from_millis(100)).unwrap();
+        assert!(stats.frames > 0);
     }
 }

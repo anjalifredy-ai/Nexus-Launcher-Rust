@@ -1,11 +1,11 @@
-//! Nexus Launcher — start entry (session + smooth config).
+//! Nexus Launcher — start entry with live frame loop.
 //!
 //!   cargo run -p nexus-start
-//!   cargo run -p nexus-start -- --version 26.3 --profile performance
+//!   cargo run -p nexus-start -- --version 26.3 --profile performance --seconds 3
 
 use std::env;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nexus_engine::{EngineSupervisor, PerformanceProfile, SessionRequest, SmoothConfig};
 use nexus_versions::{BackendKind, VersionInfo, SUPPORTED_VERSIONS};
@@ -14,6 +14,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let mut version = "26.3".to_string();
     let mut profile = PerformanceProfile::Balanced;
+    let mut seconds: u64 = 3;
 
     let mut i = 0;
     while i < args.len() {
@@ -34,11 +35,17 @@ fn main() {
                     };
                 }
             }
+            "--seconds" | "-s" => {
+                i += 1;
+                if i < args.len() {
+                    seconds = args[i].parse().unwrap_or(3);
+                }
+            }
             "--help" | "-h" => {
                 println!(
                     "Nexus Launcher\n\n\
                      Versions: {}\n\n\
-                     USAGE:\n  nexus-start [--version ID] [--profile performance|balanced|quality]\n",
+                     USAGE:\n  nexus-start [--version ID] [--profile perf|balanced|quality] [--seconds N]\n",
                     SUPPORTED_VERSIONS.join(", ")
                 );
                 return;
@@ -74,7 +81,7 @@ fn main() {
     }
 
     let smooth = SmoothConfig::from_profile(profile);
-    let start = Instant::now();
+    let handoff_t0 = Instant::now();
 
     let mut engine = EngineSupervisor::default();
     let handle = match engine.start(SessionRequest {
@@ -91,7 +98,7 @@ fn main() {
         }
     };
 
-    let ms = start.elapsed().as_millis();
+    let handoff_ms = handoff_t0.elapsed().as_millis();
     let backend_name = match handle.backend {
         BackendKind::HorizonNative => "HorizonNative",
         BackendKind::MultiVersionRuntime => "MultiVersionRuntime",
@@ -103,15 +110,40 @@ fn main() {
     println!("  version     : {}", handle.version_id);
     println!("  backend     : {backend_name}");
     println!("  profile     : {:?}", handle.smooth.profile);
-    println!("  handoff     : {ms} ms");
+    println!("  handoff     : {handoff_ms} ms");
     println!("  fps_cap     : {}", handle.smooth.fps_cap);
     println!("  render dist : {}", handle.smooth.render_distance);
     println!("  res scale   : {}%", handle.smooth.resolution_scale_percent);
-    println!("  vsync       : {}", handle.smooth.vsync);
-    println!("  vulkan      : {}", handle.smooth.prefer_vulkan);
-    println!("  adaptive    : {}", handle.smooth.adaptive_quality);
-    println!("  data        : {}", data.display());
+    println!("  loop        : {seconds}s live frame loop");
     println!("══════════════════════════════════════");
-    println!("  status: LIVE (engine binary link = next milestone)");
+
+    let stats = match engine.run_for(Duration::from_secs(seconds)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("frame loop error: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let fps = if seconds > 0 {
+        stats.frames as f64 / seconds as f64
+    } else {
+        0.0
+    };
+
+    println!("  FRAME LOOP DONE");
+    println!("  frames      : {}", stats.frames);
+    println!("  avg FPS     : {fps:.1}");
+    println!("  avg frame   : {} µs", stats.avg_frame_us);
+    println!("  over budget : {}", stats.over_budget);
+    println!("  adaptive ↓  : {}", stats.degrade_steps);
+    if let Some(s) = engine.active() {
+        println!("  final RD    : {}", s.smooth.render_distance);
+        println!("  final scale : {}%", s.smooth.resolution_scale_percent);
+    }
     println!("══════════════════════════════════════");
+    println!("  status: LIVE loop OK · GPU world = next");
+    println!("══════════════════════════════════════");
+
+    let _ = engine.stop();
 }
