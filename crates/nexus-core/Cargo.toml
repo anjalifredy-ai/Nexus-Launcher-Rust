@@ -9,6 +9,7 @@ nexus-versions = { path = "../nexus-versions" }
 nexus-download = { path = "../nexus-download" }
 nexus-content = { path = "../nexus-content" }
 nexus-launch = { path = "../nexus-launch" }
+nexus-engine = { path = "../nexus-engine" }
 nexus-ui = { path = "../nexus-ui" }
 serde = { workspace = true }
 thiserror = { workspace = true }

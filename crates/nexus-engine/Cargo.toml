@@ -1,0 +1,11 @@
+[package]
+name = "nexus-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-versions = { path = "../nexus-versions" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

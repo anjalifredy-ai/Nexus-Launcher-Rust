@@ -1,14 +1,18 @@
-//! Parallel download + SHA1 verify + resume-friendly install pipeline.
-//!
-//! Fast launch depends on this finishing *before* Play: once `ready`, launch
-//! path skips network and aims for <5s into the game loop.
+//! Install pipeline: version JSON, client jar, libraries (rule-filtered), asset index + objects.
+//! Parallel downloads with SHA1 verify. Ready marker only after core success.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use nexus_versions::{MANIFEST_URL, VersionManifestV2, SUPPORTED_VERSIONS};
+use futures::stream::{self, StreamExt};
+use nexus_versions::{MANIFEST_URL, SUPPORTED_VERSIONS, VersionManifestV2};
+use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use thiserror::Error;
 use tracing::{info, warn};
+
+const MAX_PARALLEL: usize = 8;
+const ASSET_BASE: &str = "https://resources.download.minecraft.net";
 
 #[derive(Debug, Error)]
 pub enum DownloadError {
@@ -28,6 +32,8 @@ pub enum DownloadError {
     UnsupportedVersion(String),
     #[error("version not found in Mojang manifest: {0}")]
     NotInManifest(String),
+    #[error("missing field: {0}")]
+    MissingField(String),
 }
 
 #[derive(Debug, Clone)]
@@ -65,11 +71,86 @@ impl InstallRoot {
     }
 }
 
-pub async fn fetch_manifest(client: &reqwest::Client) -> Result<VersionManifestV2, DownloadError> {
-    let manifest: VersionManifestV2 = client.get(MANIFEST_URL).send().await?.error_for_status()?.json().await?;
-    Ok(manifest)
+#[derive(Debug, Deserialize)]
+struct VersionFile {
+    downloads: Option<Downloads>,
+    libraries: Option<Vec<Library>>,
+    #[serde(rename = "assetIndex")]
+    asset_index: Option<AssetIndexRef>,
 }
 
+#[derive(Debug, Deserialize)]
+struct Downloads {
+    client: Option<Artifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Artifact {
+    url: String,
+    sha1: String,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Library {
+    name: String,
+    downloads: Option<LibraryDownloads>,
+    rules: Option<Vec<Rule>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LibraryDownloads {
+    artifact: Option<Artifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Rule {
+    action: String,
+    os: Option<OsRule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OsRule {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssetIndexRef {
+    id: String,
+    url: String,
+    sha1: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssetIndexFile {
+    objects: std::collections::HashMap<String, AssetObject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssetObject {
+    hash: String,
+    #[allow(dead_code)]
+    size: u64,
+}
+
+#[derive(Clone)]
+struct Job {
+    url: String,
+    dest: PathBuf,
+    sha1: String,
+}
+
+pub async fn fetch_manifest(client: &reqwest::Client) -> Result<VersionManifestV2, DownloadError> {
+    Ok(client
+        .get(MANIFEST_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+/// Full install for a matrix version: JSON + client + libraries + assets → ready.
 pub async fn ensure_version(
     client: &reqwest::Client,
     install: &InstallRoot,
@@ -79,7 +160,7 @@ pub async fn ensure_version(
         return Err(DownloadError::UnsupportedVersion(version_id.to_string()));
     }
     if install.is_ready(version_id) {
-        info!(version = version_id, "already ready — skip download");
+        info!(version = version_id, "already ready");
         return Ok(());
     }
 
@@ -90,38 +171,142 @@ pub async fn ensure_version(
         .find(|v| v.id == version_id)
         .ok_or_else(|| DownloadError::NotInManifest(version_id.to_string()))?;
 
-    let version_json: serde_json::Value = client
+    let raw = client
         .get(&entry.url)
         .send()
         .await?
         .error_for_status()?
-        .json()
+        .bytes()
         .await?;
+    let version: VersionFile = serde_json::from_slice(&raw)?;
 
     let dir = install.version_dir(version_id);
     tokio::fs::create_dir_all(&dir).await?;
-    let json_path = dir.join(format!("{version_id}.json"));
-    tokio::fs::write(&json_path, serde_json::to_vec_pretty(&version_json)?).await?;
+    tokio::fs::write(dir.join(format!("{version_id}.json")), &raw).await?;
 
-    // Client jar
-    if let Some(client_obj) = version_json.get("downloads").and_then(|d| d.get("client")) {
-        let url = client_obj
-            .get("url")
-            .and_then(|u| u.as_str())
-            .ok_or_else(|| DownloadError::NotInManifest("client.url".into()))?;
-        let sha = client_obj
-            .get("sha1")
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
-        let jar_path = dir.join(format!("{version_id}.jar"));
-        download_verified(client, url, &jar_path, sha).await?;
+    let mut jobs: Vec<Job> = Vec::new();
+
+    if let Some(client_art) = version.downloads.as_ref().and_then(|d| d.client.as_ref()) {
+        jobs.push(Job {
+            url: client_art.url.clone(),
+            dest: dir.join(format!("{version_id}.jar")),
+            sha1: client_art.sha1.clone(),
+        });
     } else {
-        warn!(version = version_id, "no client download in version json — native path may use prepare pack instead");
+        warn!(version = version_id, "no client jar in metadata");
     }
 
-    // Mark ready only after core artifacts exist. Libraries/assets fill-in is next iteration.
+    if let Some(libs) = &version.libraries {
+        for lib in libs {
+            if !library_allowed_android(lib) {
+                continue;
+            }
+            if let Some(art) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) {
+                let rel = art
+                    .path
+                    .clone()
+                    .unwrap_or_else(|| maven_path_from_name(&lib.name));
+                jobs.push(Job {
+                    url: art.url.clone(),
+                    dest: install.libraries_dir().join(rel),
+                    sha1: art.sha1.clone(),
+                });
+            }
+        }
+    }
+
+    // Asset index + objects
+    if let Some(ai) = &version.asset_index {
+        let index_path = install
+            .assets_dir()
+            .join("indexes")
+            .join(format!("{}.json", ai.id));
+        download_verified(client, &ai.url, &index_path, &ai.sha1).await?;
+        let index_bytes = tokio::fs::read(&index_path).await?;
+        let index: AssetIndexFile = serde_json::from_slice(&index_bytes)?;
+        for obj in index.objects.values() {
+            let prefix = &obj.hash[..2];
+            let dest = install
+                .assets_dir()
+                .join("objects")
+                .join(prefix)
+                .join(&obj.hash);
+            if dest.is_file() {
+                continue;
+            }
+            jobs.push(Job {
+                url: format!("{ASSET_BASE}/{prefix}/{}", obj.hash),
+                dest,
+                sha1: obj.hash.clone(),
+            });
+        }
+    }
+
+    info!(version = version_id, jobs = jobs.len(), "downloading");
+    run_jobs(client, jobs).await?;
+
     tokio::fs::write(install.ready_marker(version_id), b"ok").await?;
-    info!(version = version_id, "marked ready");
+    info!(version = version_id, "ready");
+    Ok(())
+}
+
+fn library_allowed_android(lib: &Library) -> bool {
+    let rules = match &lib.rules {
+        None => return true,
+        Some(r) if r.is_empty() => return true,
+        Some(r) => r,
+    };
+    // Default disallow if any rule exists, then apply in order (Mojang style).
+    let mut allow = false;
+    for rule in rules {
+        let os_match = match &rule.os {
+            None => true,
+            Some(os) => match os.name.as_deref() {
+                // Treat Android closer to linux for classifier-less artifacts.
+                Some("linux") | None => true,
+                Some("windows") | Some("osx") => false,
+                _ => false,
+            },
+        };
+        if !os_match {
+            continue;
+        }
+        allow = rule.action == "allow";
+    }
+    allow
+}
+
+fn maven_path_from_name(name: &str) -> String {
+    // group:artifact:version[:classifier]
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 3 {
+        return name.replace(':', "/");
+    }
+    let group = parts[0].replace('.', "/");
+    let artifact = parts[1];
+    let version = parts[2];
+    let file = if parts.len() >= 4 {
+        format!("{artifact}-{version}-{}.jar", parts[3])
+    } else {
+        format!("{artifact}-{version}.jar")
+    };
+    format!("{group}/{artifact}/{version}/{file}")
+}
+
+async fn run_jobs(client: &reqwest::Client, jobs: Vec<Job>) -> Result<(), DownloadError> {
+    let client = Arc::new(client.clone());
+    let results: Vec<Result<(), DownloadError>> = stream::iter(jobs)
+        .map(|job| {
+            let client = Arc::clone(&client);
+            async move { download_verified(&client, &job.url, &job.dest, &job.sha1).await }
+        })
+        .buffer_unordered(MAX_PARALLEL)
+        .collect()
+        .await;
+
+    for r in results {
+        r?;
+    }
     Ok(())
 }
 
@@ -133,9 +318,8 @@ async fn download_verified(
 ) -> Result<(), DownloadError> {
     if dest.is_file() && !expected_sha1.is_empty() {
         let existing = tokio::fs::read(dest).await?;
-        let got = sha1_hex(&existing);
-        if got == expected_sha1 {
-            return Ok(());
+        if sha1_hex(&existing) == expected_sha1 {
+            return Ok();
         }
     }
 

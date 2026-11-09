@@ -1,13 +1,15 @@
-//! Fast launch path.
+//! Fast + smooth launch path.
 //!
-//! Contract: if version is `ready`, `launch` must not hit the network and should
-//! reach the engine entry within the 5s budget on mid-range devices (prepare-once model).
+//! Ready version → no network → apply SmoothConfig → engine session.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use nexus_download::InstallRoot;
-use nexus_versions::{BackendKind, VersionInfo};
+use nexus_engine::{
+    EngineSupervisor, PerformanceProfile, SessionRequest, SmoothConfig,
+};
+use nexus_versions::VersionInfo;
 use thiserror::Error;
 use tracing::info;
 
@@ -15,10 +17,10 @@ use tracing::info;
 pub enum LaunchError {
     #[error("version not supported: {0}")]
     Unsupported(String),
-    #[error("version not installed / not ready: {0} — install first")]
+    #[error("version not installed / not ready: {0}")]
     NotReady(String),
-    #[error("engine entry not linked yet for backend {0:?}")]
-    EngineNotLinked(BackendKind),
+    #[error(transparent)]
+    Engine(#[from] nexus_engine::EngineError),
 }
 
 #[derive(Debug, Clone)]
@@ -28,27 +30,20 @@ pub struct LaunchRequest {
     pub performance: PerformanceProfile,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub enum PerformanceProfile {
-    Performance,
-    #[default]
-    Balanced,
-    Quality,
-}
-
 #[derive(Debug, Clone)]
 pub struct LaunchReport {
     pub version_id: String,
-    pub backend: BackendKind,
+    pub backend: nexus_versions::BackendKind,
     pub prepare_ms: u128,
     pub handoff_ms: u128,
+    pub smooth: SmoothConfig,
 }
 
-/// Validate readiness and hand off to the correct backend.
-///
-//! Full engine binaries are linked in later milestones; this enforces the
-//! fast-path contract and returns structured timing.
-pub async fn launch(install: &InstallRoot, req: LaunchRequest) -> Result<LaunchReport, LaunchError> {
+pub async fn launch(
+    install: &InstallRoot,
+    engine: &mut EngineSupervisor,
+    req: LaunchRequest,
+) -> Result<LaunchReport, LaunchError> {
     let start = Instant::now();
     let info = VersionInfo::for_id(&req.version_id)
         .ok_or_else(|| LaunchError::Unsupported(req.version_id.clone()))?;
@@ -57,25 +52,35 @@ pub async fn launch(install: &InstallRoot, req: LaunchRequest) -> Result<LaunchR
         return Err(LaunchError::NotReady(req.version_id));
     }
 
+    let smooth = SmoothConfig::from_profile(req.performance);
     let prepare_ms = start.elapsed().as_millis();
 
-    // Backend handoff points — implement engine entry here as crates land.
-    match info.backend {
-        BackendKind::HorizonNative => {
-            info!(version = %req.version_id, profile = ?req.performance, "handoff → horizon_native");
-            // nexus_engine_horizon::start(...)
-        }
-        BackendKind::MultiVersionRuntime => {
-            info!(version = %req.version_id, profile = ?req.performance, "handoff → multi_version");
-            // nexus_engine_runtime::start(...)
-        }
-    }
+    let game_dir = install.version_dir(&req.version_id);
+    tokio::fs::create_dir_all(&req.instance_dir)
+        .await
+        .map_err(|e| LaunchError::NotReady(format!("instance dir: {e}")))?;
+
+    let handle = engine.start(SessionRequest {
+        version_id: req.version_id.clone(),
+        backend: info.backend,
+        smooth: smooth.clone(),
+        instance_dir: req.instance_dir,
+        game_dir,
+    })?;
 
     let handoff_ms = start.elapsed().as_millis();
+    info!(
+        version = %handle.version_id,
+        handoff_ms,
+        rd = handle.smooth.render_distance,
+        "launch handoff complete"
+    );
+
     Ok(LaunchReport {
-        version_id: req.version_id,
-        backend: info.backend,
+        version_id: handle.version_id,
+        backend: handle.backend,
         prepare_ms,
         handoff_ms,
+        smooth: handle.smooth,
     })
 }

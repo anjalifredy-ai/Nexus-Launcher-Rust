@@ -1,6 +1,4 @@
-//! Premium launcher UI model (Rust).
-//!
-//! Android shell renders this state. No mod browser by product decision.
+//! Premium launcher UI model — smooth-play focused.
 
 use nexus_content::{ResourcePackEntry, ShaderPackEntry, SkinSlot};
 use nexus_versions::{SUPPORTED_VERSIONS, VersionInfo};
@@ -20,7 +18,6 @@ pub enum Screen {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PremiumTheme {
     pub name: &'static str,
-    /// Deep charcoal background.
     pub bg: u32,
     pub surface: u32,
     pub accent: u32,
@@ -41,6 +38,14 @@ impl Default for PremiumTheme {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum UiPerformance {
+    Performance,
+    #[default]
+    Balanced,
+    Quality,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherState {
     pub screen: Screen,
@@ -50,7 +55,7 @@ pub struct LauncherState {
     pub skins: Vec<SkinSlot>,
     pub resource_packs: Vec<ResourcePackEntry>,
     pub shader_packs: Vec<ShaderPackEntry>,
-    /// Last launch handoff time (ms) for HUD / debug.
+    pub performance: UiPerformance,
     pub last_launch_ms: Option<u128>,
     pub busy: bool,
     pub status_line: String,
@@ -70,15 +75,14 @@ impl Default for LauncherState {
             skins: vec![],
             resource_packs: vec![],
             shader_packs: vec![],
+            performance: UiPerformance::Balanced,
             last_launch_ms: None,
             busy: false,
-            status_line: "Ready".into(),
+            status_line: "Ready · install a version, then Play".into(),
         }
     }
 }
 
-/// Navigation destinations exposed in the premium chrome.
-/// Explicitly excludes Mods.
 pub fn primary_nav() -> &'static [(Screen, &'static str)] {
     &[
         (Screen::Home, "Home"),
