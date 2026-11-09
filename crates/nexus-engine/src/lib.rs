@@ -1,11 +1,12 @@
-//! Session + frame loop + software scene + world + mesh.
+//! Session + frame loop + world + culled mesh + input player + height cache.
 
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nexus_input::{InputState, Player};
 use nexus_mesh::{mesh_chunk_tops, Mesh};
-use nexus_render::{draw_scene, write_ppm, Camera, Framebuffer};
+use nexus_render::{draw_scene_from_heights, write_ppm, Camera, Framebuffer};
 use nexus_versions::BackendKind;
 use nexus_world::World;
 
@@ -23,7 +24,6 @@ impl std::fmt::Display for EngineError {
         }
     }
 }
-
 impl std::error::Error for EngineError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -152,6 +152,10 @@ pub struct EngineSupervisor {
     camera: Camera,
     world: World,
     mesh: Mesh,
+    player: Player,
+    input: InputState,
+    height_cache: Vec<u8>,
+    cache_scroll: i32,
 }
 
 impl Default for EngineSupervisor {
@@ -163,6 +167,10 @@ impl Default for EngineSupervisor {
             camera: Camera::default(),
             world: World::default(),
             mesh: Mesh::default(),
+            player: Player::default(),
+            input: InputState::default(),
+            height_cache: Vec::new(),
+            cache_scroll: i32::MIN,
         }
     }
 }
@@ -186,13 +194,16 @@ impl EngineSupervisor {
             handle.smooth.resolution_scale_percent,
         ));
         self.mesh.clear();
-        for cz in -1..=1 {
-            for cx in -1..=1 {
+        self.height_cache.clear();
+        self.cache_scroll = i32::MIN;
+        for cz in -2..=2 {
+            for cx in -2..=2 {
                 let _ = self.world.ensure_chunk(cx, cz);
                 let ch = nexus_world::Chunk::generate(cx, cz);
                 mesh_chunk_tops(&ch, &mut self.mesh);
             }
         }
+        self.player = Player::default();
         self.active = Some(handle.clone());
         Ok(handle)
     }
@@ -210,21 +221,23 @@ impl EngineSupervisor {
     pub fn stats(&self) -> &FrameStats {
         &self.stats
     }
-
     pub fn active(&self) -> Option<&SessionHandle> {
         self.active.as_ref()
     }
-
     pub fn world_chunks(&self) -> usize {
         self.world.chunk_count()
     }
-
     pub fn mesh_tris(&self) -> usize {
         self.mesh.triangle_count()
     }
-
     pub fn mesh_verts(&self) -> usize {
         self.mesh.vertices.len()
+    }
+    pub fn player_pos(&self) -> (f32, f32, f32) {
+        (self.player.x, self.player.y, self.player.z)
+    }
+    pub fn set_input(&mut self, input: InputState) {
+        self.input = input;
     }
 
     pub fn save_preview(&self, path: &std::path::Path) -> Result<(), EngineError> {
@@ -238,24 +251,55 @@ impl EngineSupervisor {
         self.fb.as_ref().map(|f| (f.width, f.height))
     }
 
+    fn rebuild_height_cache(&mut self, cols: usize, scroll: i32) {
+        self.height_cache.clear();
+        self.height_cache.reserve(cols);
+        for c in 0..cols {
+            let wx = c as i32 + scroll;
+            let cx = wx.div_euclid(16);
+            let lx = wx.rem_euclid(16) as usize;
+            let ch = self.world.ensure_chunk(cx, 0);
+            self.height_cache.push(ch.column(lx, 8).height);
+        }
+        self.cache_scroll = scroll;
+    }
+
     pub fn tick(&mut self) -> Result<(), EngineError> {
-        let Some(session) = self.active.as_mut() else {
-            return Err(EngineError::NotRunning);
-        };
-        if !session.running {
-            return Err(EngineError::NotRunning);
+        {
+            let session = self.active.as_ref().ok_or(EngineError::NotRunning)?;
+            if !session.running {
+                return Err(EngineError::NotRunning);
+            }
         }
 
-        let budget = session.smooth.frame_duration();
         let t0 = Instant::now();
-
         let tick_n = self.stats.frames;
-        let rd = session.smooth.render_distance;
-        self.camera.advance(tick_n);
-        let cam = self.camera;
-        if let Some(fb) = self.fb.as_mut() {
-            draw_scene(fb, tick_n, rd, &cam);
+
+        self.player.integrate(&self.input, 1.0 / 60.0);
+        if self.input.move_x == 0.0 && self.input.move_z == 0.0 {
+            self.camera.advance(tick_n);
+        } else {
+            self.camera.x = self.player.x;
+            self.camera.y = self.player.y * 0.1;
+            self.camera.yaw = self.player.yaw;
         }
+        let cam = self.camera;
+        let rd = self.active.as_ref().unwrap().smooth.render_distance;
+        let fps_cap = self.active.as_ref().unwrap().smooth.fps_cap;
+        let vsync = self.active.as_ref().unwrap().smooth.vsync;
+        let adaptive = self.active.as_ref().unwrap().smooth.adaptive_quality;
+        let budget = self.active.as_ref().unwrap().smooth.frame_duration();
+
+        let cols = ((rd as usize) * 2).clamp(10, 28);
+        let scroll = (cam.x * 2.0) as i32 + (tick_n as i32 / 2);
+        if self.cache_scroll != scroll || self.height_cache.len() != cols {
+            self.rebuild_height_cache(cols, scroll);
+        }
+        let heights = self.height_cache.clone();
+        if let Some(fb) = self.fb.as_mut() {
+            draw_scene_from_heights(fb, tick_n, &heights, &cam);
+        }
+        self.input.clear_edges();
 
         let elapsed = t0.elapsed();
         self.stats.frames += 1;
@@ -265,22 +309,25 @@ impl EngineSupervisor {
             + self.stats.last_frame_us)
             / (n as u128);
 
-        let capped = session.smooth.fps_cap > 0;
-        if capped {
+        if fps_cap > 0 {
             if elapsed > budget {
                 self.stats.over_budget += 1;
-                if session.smooth.adaptive_quality {
-                    session.smooth.degrade_one_step();
+                if adaptive {
+                    if let Some(s) = self.active.as_mut() {
+                        s.smooth.degrade_one_step();
+                    }
                     self.stats.degrade_steps += 1;
                 }
             } else if let Some(rest) = budget.checked_sub(elapsed) {
-                if session.smooth.vsync {
+                if vsync {
                     thread::sleep(rest);
                 }
             }
-        } else if elapsed > Duration::from_millis(50) && session.smooth.adaptive_quality {
+        } else if elapsed > Duration::from_millis(50) && adaptive {
             self.stats.over_budget += 1;
-            session.smooth.degrade_one_step();
+            if let Some(s) = self.active.as_mut() {
+                s.smooth.degrade_one_step();
+            }
             self.stats.degrade_steps += 1;
         }
 
