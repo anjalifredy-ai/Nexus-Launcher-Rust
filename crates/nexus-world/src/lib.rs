@@ -1,4 +1,4 @@
-//! Lightweight block world — column height storage for renderer + future mesh.
+//! Block world — column storage + mutations for server.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -82,6 +82,32 @@ impl World {
 
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
+    }
+
+    pub fn set_top(&mut self, cx: i32, cz: i32, lx: usize, lz: usize, block: BlockId) {
+        let ch = if let Some(i) = self.chunks.iter().position(|c| c.cx == cx && c.cz == cz) {
+            &mut self.chunks[i]
+        } else {
+            self.chunks.push(Chunk::generate(cx, cz));
+            self.chunks.last_mut().unwrap()
+        };
+        let lx = lx % CHUNK_SIZE;
+        let lz = lz % CHUNK_SIZE;
+        match block {
+            BlockId::Air => {
+                ch.columns[lz][lx].height = 0;
+                ch.columns[lz][lx].top = BlockId::Air;
+            }
+            other => {
+                let h = ch.columns[lz][lx]
+                    .height
+                    .max(1)
+                    .saturating_add(1)
+                    .min(CHUNK_HEIGHT - 1);
+                ch.columns[lz][lx].height = h;
+                ch.columns[lz][lx].top = other;
+            }
+        }
     }
 }
 
